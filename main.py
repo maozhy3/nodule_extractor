@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-import sys
+import sys, subprocess, os, importlib.util
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 import re
@@ -8,9 +8,31 @@ import pandas as pd
 from tqdm import tqdm
 from typing import Optional
 from llama_cpp import Llama
-from pathlib import Path
-from config import LLAMA_N_CTX, LLAMA_N_THREADS, LLAMA_N_GPU_LAYERS, LLAMA_VERBOSE
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
+# 默认配置（内层兜底）
+from config import *
+
+# 尝试加载外层配置（如果存在）
+outer = os.path.join(os.path.dirname(sys.executable), 'config.py')
+if os.path.exists(outer):
+    spec = importlib.util.spec_from_file_location("external_config", outer)
+    cfg = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(cfg)
+
+    # 用外层配置覆盖内层
+    for key in dir(cfg):
+        if not key.startswith('_'):
+            globals()[key] = getattr(cfg, key)
+
+
+# 首次运行处理vc
+bundle = Path(__file__).parent
+flag = bundle / '_vcredist' / '.done'
+vc    = bundle / '_vcredist' / 'vc_redist.x64.exe'
+if vc.exists() and not flag.exists():
+    subprocess.check_call([str(vc), '/quiet', '/norestart'])
+    flag.touch()
 
 def filter_segments(text: str) -> str:
     """
@@ -30,12 +52,21 @@ def filter_segments(text: str) -> str:
 
 def remove_img_tags(text: str) -> str:
     """
-    删除中英文括号内包含 lm/im/IMG（不区分大小写）+数字 的片段。
+    删除中英文括号内包含 lm/im/img（不区分大小写）的片段，
+    但仅当整个括号片段长度 ≤ 20 字符。
     """
     if not text:
         return text
-    pattern = r'[（(](?:lm|im|img)\d+[)）]'
-    return re.sub(pattern, '', text, flags=re.IGNORECASE)
+
+    def replacer(match: re.Match) -> str:
+        # match.group(0) 是整个括号片段，如 "(IMG79/80)" 或 "（img123）"
+        if len(match.group(0)) <= 20:
+            return ""
+        return match.group(0)  # 太长，保留原样
+
+    # 匹配最内层或外层括号均可，这里用非贪婪匹配括号内容
+    pattern = r'[（(][^)）]*?(?:lm|im|img)[^)）]*?[)）]'
+    return re.sub(pattern, replacer, text, flags=re.IGNORECASE)
 
 def preprocessing(input: str) -> str:
     """预处理输入文本"""
@@ -50,7 +81,7 @@ def preprocessing(input: str) -> str:
 import re
 from typing import Optional
 
-# 预编译正则：把“数字+可选空白+单位”整体抓出来
+# 预编译正则：把"数字+可选空白+单位"整体抓出来
 _NUM_UNIT_RE = re.compile(r'(\d+\.?\d*)\s*(cm|mm|um|μm|m)?', flags=re.I)
 
 def _normalize(text: str) -> str:
@@ -90,7 +121,7 @@ def extract_max_value(text: str, raw_text: str = "") -> Optional[float]:
 
     if max_val < 3 and has_cm:                        
         max_val *= 10
-    elif 3 <= max_val < 5 and has_cm and not has_mm:  
+    elif 3 <= max_val < 7 and has_cm and not has_mm:  
         max_val *= 10
 
 
@@ -111,14 +142,7 @@ def predict_single(llm: Llama, input_text: str) -> tuple[Optional[float], float]
     processed_input = filter_segments(processed_input)
     
     # 构建prompt
-    prompt = f"""<|im_start|>system
-你是医疗信息提取助手。我需要你从影像表现的报告中，找到肺部病灶（包括结节、磨玻璃结节、团块、局灶影，不包括空洞）的最长径。如果有多个病灶，只需要最长的。请注意单位，我希望返回的结果以mm为单位，如果是cm你需要进行转换，1cm=10mm。报告中其他部位和系统（如肝，肾，脾）的病灶请无视。如果报告中没有肺部病灶，或者没有具体的尺寸信息，请输出0。你的输出结果只需要输出最终的数字，不需要任何的单位或者前置描述。<|im_end|>
-<|im_start|>user
-影像报告：{processed_input}
-
-请提取报告中最大的病灶尺寸（mm）：<|im_end|>
-<|im_start|>assistant
-"""
+    prompt = PROMPT_TEMPLATE.format(processed_input=processed_input)
     
     # 推理
     t0 = time.perf_counter()
@@ -142,6 +166,13 @@ def predict_single(llm: Llama, input_text: str) -> tuple[Optional[float], float]
         return None, 0.0
 
 
+def _predict_task(args):
+    """线程池任务函数"""
+    llm, idx, input_text = args
+    pred_value, infer_time = predict_single(llm, input_text)
+    return idx, pred_value, infer_time
+
+
 def batch_predict(df: pd.DataFrame, model_path: str) -> tuple[list, float, str]:
     """
     Args:
@@ -150,6 +181,8 @@ def batch_predict(df: pd.DataFrame, model_path: str) -> tuple[list, float, str]:
     Returns:
         (预测结果列表, 总耗时, 模型名称)
     """
+    from config import THREAD_POOL_MAX_WORKERS
+    
     # 获取模型名称
     model_name = Path(model_path).stem
     
@@ -173,27 +206,29 @@ def batch_predict(df: pd.DataFrame, model_path: str) -> tuple[list, float, str]:
         return None, 0.0, model_name
     
     # 批量预测
-    print(f"正在进行批量预测（共 {len(df)} 条）...")
+    print(f"正在进行批量预测（共 {len(df)} 条，线程数: {THREAD_POOL_MAX_WORKERS}）...")
     print("-" * 80)
     
-    predictions = []
+    predictions = [None] * len(df)
     total_time = 0
     
-
-    for idx, row in tqdm(df.iterrows(), total=len(df), desc="预测进度"):
-        input_text = str(row['yxbx'])
+    # 准备任务列表
+    tasks = [(llm, idx, str(row['yxbx'])) for idx, row in df.iterrows()]
+    
+    # 使用线程池并行处理
+    with ThreadPoolExecutor(max_workers=THREAD_POOL_MAX_WORKERS) as executor:
+        futures = {executor.submit(_predict_task, task): task for task in tasks}
         
-        # 预测
-        pred_value, infer_time = predict_single(llm, input_text)
-        predictions.append(pred_value)
-        total_time += infer_time
+        for future in tqdm(as_completed(futures), total=len(df), desc="预测进度"):
+            idx, pred_value, infer_time = future.result()
+            predictions[idx] = pred_value
+            total_time += infer_time
 
     avg_time = total_time / len(df)
     print("-" * 80)
     print(f"✓ 预测完成！总耗时: {total_time:.2f}s，平均耗时: {avg_time:.3f}s")
         
     return predictions, total_time, model_name
-
 
 
 def batch_run(excel_path: str, model_paths: list[str], output_path: Optional[str] = None) -> bool:
@@ -214,12 +249,6 @@ def batch_run(excel_path: str, model_paths: list[str], output_path: Optional[str
 
 
 if __name__ == "__main__":
-    import sys
-    from pathlib import Path
-    sys.path.insert(0, str(Path(__file__).parent))
-    from config import (EXCEL_PATH, MODEL_PATHS, OUTPUT_PATH,
-                        LLAMA_N_CTX, LLAMA_N_THREADS, LLAMA_N_GPU_LAYERS,
-                        LLAMA_VERBOSE)
 
     df = pd.read_excel(EXCEL_PATH)
 
@@ -234,3 +263,4 @@ if __name__ == "__main__":
 
     df.to_excel(OUTPUT_PATH, index=False)
     print(f"✓ 全部预测完成，结果已保存至：{OUTPUT_PATH}")
+    input("按任意键结束")
