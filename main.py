@@ -166,9 +166,18 @@ def predict_single(llm: Llama, input_text: str) -> tuple[Optional[float], float]
         return None, 0.0
 
 
+
 def _predict_task(args):
-    """线程池任务函数"""
-    llm, idx, input_text = args
+    """每个线程独自加载一份模型，彻底避免竞态"""
+    model_path, idx, input_text = args          # 把模型路径传进来
+    # 线程本地再建一个独立实例
+    llm = Llama(
+        model_path=model_path,
+        n_ctx=LLAMA_N_CTX,
+        n_threads=LLAMA_N_THREADS,   # 可以仍是 1
+        n_gpu_layers=LLAMA_N_GPU_LAYERS,
+        verbose=False                # 关掉，否则日志会乱
+    )
     pred_value, infer_time = predict_single(llm, input_text)
     return idx, pred_value, infer_time
 
@@ -213,7 +222,7 @@ def batch_predict(df: pd.DataFrame, model_path: str) -> tuple[list, float, str]:
     total_time = 0
     
     # 准备任务列表
-    tasks = [(llm, idx, str(row['yxbx'])) for idx, row in df.iterrows()]
+    tasks = [(model_path, idx, str(row['yxbx'])) for idx, row in df.iterrows()]
     
     # 使用线程池并行处理
     with ThreadPoolExecutor(max_workers=THREAD_POOL_MAX_WORKERS) as executor:
