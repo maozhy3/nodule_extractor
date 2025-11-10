@@ -15,6 +15,7 @@ build/
 dist/
 *.egg-info/
 build_tmp/
+installer_output/
 
 # IDEs
 .vscode/
