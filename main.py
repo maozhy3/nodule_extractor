@@ -8,7 +8,7 @@ import pandas as pd
 from tqdm import tqdm
 from typing import Optional
 from llama_cpp import Llama
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ProcessPoolExecutor, as_completed
 
 # 默认配置（内层兜底）
 from config import *
@@ -167,18 +167,22 @@ def predict_single(llm: Llama, input_text: str) -> tuple[Optional[float], float]
 
 
 
-def _predict_task(args):
-    """每个线程独自加载一份模型，彻底避免竞态"""
-    model_path, idx, input_text = args          # 把模型路径传进来
-    # 线程本地再建一个独立实例
-    llm = Llama(
+def _worker_init(model_path: str):
+    """进程初始化：每个进程加载一次模型"""
+    global _worker_llm
+    _worker_llm = Llama(
         model_path=model_path,
         n_ctx=LLAMA_N_CTX,
-        n_threads=LLAMA_N_THREADS,   # 可以仍是 1
+        n_threads=LLAMA_N_THREADS,
         n_gpu_layers=LLAMA_N_GPU_LAYERS,
-        verbose=False                # 关掉，否则日志会乱
+        verbose=False,  # 多进程时关闭日志避免混乱
     )
-    pred_value, infer_time = predict_single(llm, input_text)
+
+
+def _worker_predict(args):
+    """工作进程：使用已加载的模型进行预测"""
+    idx, input_text = args
+    pred_value, infer_time = predict_single(_worker_llm, input_text)
     return idx, pred_value, infer_time
 
 
@@ -190,52 +194,74 @@ def batch_predict(df: pd.DataFrame, model_path: str) -> tuple[list, float, str]:
     Returns:
         (预测结果列表, 总耗时, 模型名称)
     """
-    from config import THREAD_POOL_MAX_WORKERS
-    
     # 获取模型名称
     model_name = Path(model_path).stem
     
     print(f"\n{'=' * 80}")
-    print(f"正在测试模型: {model_name}")
+    print(f"模型: {model_name}")
     print(f"{'=' * 80}")
     
-    # 加载模型
-    print("正在加载模型...")
+    # 获取进程数配置
     try:
-        llm = Llama(
-            model_path=model_path,
-            n_ctx=LLAMA_N_CTX,
-            n_threads=LLAMA_N_THREADS,
-            n_gpu_layers=LLAMA_N_GPU_LAYERS,
-            verbose=LLAMA_VERBOSE,
-        )
-        print("✓ 模型加载成功")
-    except Exception as e:
-        print(f"❌ 模型加载失败: {e}")
-        return None, 0.0, model_name
+        from config import PROCESS_POOL_MAX_WORKERS
+        max_workers = PROCESS_POOL_MAX_WORKERS
+    except ImportError:
+        max_workers = 1  # 默认单进程
     
-    # 批量预测
-    print(f"正在进行批量预测（共 {len(df)} 条，线程数: {THREAD_POOL_MAX_WORKERS}）...")
-    print("-" * 80)
-    
-    predictions = [None] * len(df)
-    total_time = 0
-    
-    # 准备任务列表
-    tasks = [(model_path, idx, str(row['yxbx'])) for idx, row in df.iterrows()]
-    
-    # 使用线程池并行处理
-    with ThreadPoolExecutor(max_workers=THREAD_POOL_MAX_WORKERS) as executor:
-        futures = {executor.submit(_predict_task, task): task for task in tasks}
+    if max_workers <= 1:
+        # 单进程模式
+        print("正在加载模型...")
+        try:
+            llm = Llama(
+                model_path=model_path,
+                n_ctx=LLAMA_N_CTX,
+                n_threads=LLAMA_N_THREADS,
+                n_gpu_layers=LLAMA_N_GPU_LAYERS,
+                verbose=LLAMA_VERBOSE,
+            )
+            print("✓ 模型加载成功")
+        except Exception as e:
+            print(f"❌ 模型加载失败: {e}")
+            return None, 0.0, model_name
         
-        for future in tqdm(as_completed(futures), total=len(df), desc="预测进度"):
-            idx, pred_value, infer_time = future.result()
-            predictions[idx] = pred_value
+        print(f"正在进行批量预测（共 {len(df)} 条）...")
+        print("-" * 80)
+        
+        predictions = []
+        total_time = 0
+        
+        for idx, row in tqdm(df.iterrows(), total=len(df), desc="预测进度"):
+            input_text = str(row['yxbx'])
+            pred_value, infer_time = predict_single(llm, input_text)
+            predictions.append(pred_value)
             total_time += infer_time
+    else:
+        # 多进程模式
+        print(f"正在启动 {max_workers} 个进程并加载模型...")
+        print("-" * 80)
+        
+        predictions = [None] * len(df)
+        total_time = 0
+        
+        # 准备任务列表
+        tasks = [(idx, str(row['yxbx'])) for idx, row in df.iterrows()]
+        
+        # 使用进程池并行处理
+        with ProcessPoolExecutor(
+            max_workers=max_workers,
+            initializer=_worker_init,
+            initargs=(model_path,)
+        ) as executor:
+            futures = {executor.submit(_worker_predict, task): task for task in tasks}
+            
+            for future in tqdm(as_completed(futures), total=len(df), desc="预测进度"):
+                idx, pred_value, infer_time = future.result()
+                predictions[idx] = pred_value
+                total_time += infer_time
 
     avg_time = total_time / len(df)
     print("-" * 80)
-    print(f"✓ 预测完成！总耗时: {total_time:.2f}s，平均耗时: {avg_time:.3f}s")
+    print(f"✓预测完成！总耗时: {total_time:.2f}s，平均耗时: {avg_time:.3f}s")
         
     return predictions, total_time, model_name
 
@@ -251,7 +277,7 @@ def batch_run(excel_path: str, model_paths: list[str], output_path: Optional[str
         return False
     
     print("\n" + "=" * 80)
-    print("测试完成！")
+    print("推理完成！")
     print("=" * 80)
     
     return True
@@ -267,9 +293,7 @@ if __name__ == "__main__":
         col_name = f"pred_{model_name}"
         df[col_name] = preds
 
-        print(f"[{model_name}] 平均单条耗时: {total_time/len(df):.3f}s\n")
-
 
     df.to_excel(OUTPUT_PATH, index=False)
-    print(f"✓ 全部预测完成，结果已保存至：{OUTPUT_PATH}")
+    print(f"结果已保存至：{OUTPUT_PATH}")
     input("按任意键结束")
