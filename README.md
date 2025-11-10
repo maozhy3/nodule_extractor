@@ -54,12 +54,29 @@ pip install pandas openpyxl llama-cpp-python tqdm
 
 ### 3. 模型文件
 
-将 GGUF 格式的模型文件放置到 `models/` 目录：
+将 GGUF 格式的模型文件放置到 `models/` 目录。
+
+**推荐使用模型：**
+
+可以使用 Qwen2.5 系列的 GGUF 量化版本：
+
+| 模型 | 文件名 | 大小 | 下载地址 |
+|------|--------|------|----------|
+| Qwen2.5-3B-Instruct | `qwen2.5-3b-instruct-q4_k_m.gguf` | ~2GB | [Hugging Face](https://huggingface.co/Qwen/Qwen2.5-3B-Instruct-GGUF) |
+| Qwen2.5-7B-Instruct | `qwen2.5-7b-instruct-q4_k_m.gguf` | ~4.7GB | [Hugging Face](https://huggingface.co/Qwen/Qwen2.5-7B-Instruct-GGUF) |
+
+**快速下载：** 运行下载脚本自动下载模型
+```bash
+python download_model.py
+```
 
 ```
 models/
-└── qwen-medical-lora-251106-q4_k_m.gguf
+├── qwen2.5-3b-instruct-q4_k_m.gguf
+└── qwen2.5-7b-instruct-q4_k_m.gguf
 ```
+
+**说明：** 当前开发环境中的模型（`qwen-medical-lora-251106-*.gguf`）是作者基于医疗数据微调的版本，由于涉及隐私数据不便公开。使用 Qwen2.5 基础模型同样可以完成肺结节尺寸提取任务，推荐使用 7B 模型以获得更好的效果。
 
 ## 配置说明
 
@@ -72,7 +89,7 @@ OUTPUT_PATH = "test_results.xlsx"  # 结果保存路径
 
 # 模型路径
 MODEL_PATHS = [
-    "models/qwen-medical-lora-251106-q4_k_m.gguf"
+    "models/qwen2.5-3b-instruct-q4_k_m.gguf"
 ]
 
 # 推理参数
@@ -127,8 +144,8 @@ Excel 文件需包含 `yxbx` 列（影像表现）：
 
 结果会保存到指定的Excel文件，新增 `pred_模型名` 列：
 
-| yxbx | pred_qwen-medical-lora-251106-q4_k_m |
-|------|--------------------------------------|
+| yxbx | pred_qwen2.5-3b-instruct-q4_k_m |
+|------|----------------------------------|
 | 右肺上叶见结节影，大小约8mm... | 8 |
 | 左肺下叶磨玻璃影，直径1.2cm... | 12 |
 
@@ -210,6 +227,7 @@ build_gui.bat
 ├── main.py                 # 命令行程序
 ├── core.py                 # 核心业务逻辑
 ├── config.py               # 默认配置
+├── download_model.py       # 模型下载脚本
 ├── gui.spec                # GUI打包配置
 ├── main.spec               # 命令行打包配置
 ├── build_gui.bat           # 打包脚本
