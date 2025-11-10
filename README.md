@@ -67,8 +67,8 @@ python main.py
 
 ```python
 # 输入输出
-EXCEL_PATH = "test.xlsx"           # 输入文件
-OUTPUT_PATH = "test_results.xlsx"  # 输出文件
+EXCEL_PATH = "tests/test.xlsx"           # 输入文件
+OUTPUT_PATH = "tests/test_results.xlsx"  # 输出文件
 
 # 模型路径
 MODEL_PATHS = ["models/qwen2.5-7b-instruct-q4_k_m.gguf"]
@@ -164,9 +164,11 @@ pip install -r requirements-dev.txt
 
 ```bash
 # Windows
+cd tests
 run_tests.bat
 
 # Linux/Mac
+cd tests
 ./run_tests.sh
 
 # 或直接使用 pytest
@@ -196,7 +198,7 @@ ruff check . --fix
 ├── download_model.py    # 模型下载
 ├── requirements.txt     # 核心依赖
 ├── requirements-dev.txt # 开发依赖
-├── tests/               # 单元测试
+├── tests/               # 测试文件（单元测试、测试数据、测试脚本）
 ├── models/              # 模型目录
 └── checkpoints/         # 检查点目录
 ```
