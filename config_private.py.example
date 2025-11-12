@@ -1,0 +1,61 @@
+# config_private.py.example
+# 
+# 这是私有配置文件的示例模板
+# 复制此文件为 config_private.py 并修改你的个人配置
+# config_private.py 不会被提交到 git 仓库
+#
+# 使用方法：
+# 1. 复制此文件：copy config_private.py.example config_private.py
+# 2. 修改 config_private.py 中的配置项
+# 3. config_private.py 中的配置会覆盖 config.py 中的默认配置
+
+import os
+import sys
+from pathlib import Path
+
+
+def _get_base_path() -> Path:
+    """获取基础路径，兼容开发和打包环境"""
+    if getattr(sys, 'frozen', False):
+        return Path(sys.executable).parent
+    else:
+        return Path(__file__).parent
+
+
+_ROOT = _get_base_path()
+
+# ===== 示例：覆盖输入输出路径 =====
+# EXCEL_PATH = _ROOT / "my_test_data.xlsx"
+# OUTPUT_PATH = _ROOT / "my_results.xlsx"
+
+# ===== 示例：覆盖模型路径 =====
+# MODEL_PATHS = [
+#     str(_ROOT / "models" / "qwen-medical-lora-251106-f16.gguf")
+# ]
+
+# ===== 示例：覆盖推理参数 =====
+# LLAMA_N_CTX = 4096
+# LLAMA_N_THREADS = 16
+# LLAMA_N_GPU_LAYERS = 33
+# LLAMA_VERBOSE = True
+
+# ===== 示例：覆盖并行配置 =====
+# PROCESS_POOL_MAX_WORKERS = 2
+
+# ===== 示例：启用特征提取 =====
+# ENABLE_FEATURE_EXTRACTION = True
+# FEATURE_EXTRACTION_MODEL_PATH = str(_ROOT / "models" / "qwen2.5-3b-instruct-q4_k_m.gguf")
+# SAVE_TARGET_SENTENCE = True
+
+# ===== 示例：覆盖检查点配置 =====
+# CHECKPOINT_SAVE_INTERVAL = 100
+
+# ===== 示例：覆盖 Prompt 模板 =====
+# PROMPT_TEMPLATE = """<|im_start|>system
+# 你的自定义 prompt...
+# <|im_end|>
+# <|im_start|>user
+# {processed_input}
+# <|im_end|>
+# <|im_start|>assistant
+# """
