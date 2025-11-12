@@ -42,5 +42,8 @@ test*.xlsx
 release*/
 _vcredist/*.exe
 
+# Private configuration (user-specific settings)
+config_private.py
+
 # Logs
 *.log

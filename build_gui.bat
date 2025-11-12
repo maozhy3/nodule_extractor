@@ -45,6 +45,7 @@ if not exist "dist\医疗影像报告预测工具\_vcredist" mkdir "dist\医疗�
 REM 复制示例文件
 if exist "test.xlsx" copy "test.xlsx" "dist\医疗影像报告预测工具\"
 if exist "config.py" copy "config.py" "dist\医疗影像报告预测工具\config_example.py"
+if exist "config_private.py.example" copy "config_private.py.example" "dist\医疗影像报告预测工具\"
 
 REM 复制VC++运行库
 if exist "_vcredist\vc_redist.x64.exe" (
@@ -54,13 +55,14 @@ if exist "_vcredist\vc_redist.x64.exe" (
     echo ⚠ 警告: 未找到 VC++ 运行库，请手动下载并放置到 _vcredist 目录
 )
 
-REM 复制模型文件（如果存在）
-if exist "models\*.gguf" (
-    copy "models\*.gguf" "dist\医疗影像报告预测工具\models\"
-    echo ✓ 已复制模型文件
-) else (
-    echo ⚠ 警告: 未找到模型文件，请手动复制到 models 目录
-)
+REM 复制模型文件（已禁用自动复制）
+REM if exist "models\*.gguf" (
+REM     copy "models\*.gguf" "dist\医疗影像报告预测工具\models\"
+REM     echo ✓ 已复制模型文件
+REM ) else (
+REM     echo ⚠ 警告: 未找到模型文件，请手动复制到 models 目录
+REM )
+echo ⚠ 注意: 模型文件需要手动复制到 models 目录
 
 echo 完成
 echo.

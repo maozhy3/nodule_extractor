@@ -16,8 +16,8 @@ def _get_base_path() -> Path:
 
 # ===== 输入输出 =====
 _ROOT = _get_base_path()
-EXCEL_PATH = _ROOT / "test.xlsx"  # 待预测文件
-OUTPUT_PATH = _ROOT / "test_results.xlsx"  # 结果保存
+EXCEL_PATH = _ROOT / "test_results1.xlsx"  # 待预测文件
+OUTPUT_PATH = _ROOT / "test_results2.xlsx"  # 结果保存
 
 # ===== 模型列表 =====
 # 支持单个字符串或列表；也可使用通配符，由脚本自动展开
@@ -45,5 +45,66 @@ PROMPT_TEMPLATE = """<|im_start|>system
 影像报告：{processed_input}
 
 请提取报告中最大的病灶尺寸（mm）：<|im_end|>
+<|im_start|>assistant
+"""
+
+# ===== 特征提取配置（新增） =====
+# 是否启用特征提取功能（设置为 True 启用，False 仅提取尺寸）
+ENABLE_FEATURE_EXTRACTION = True
+
+# 特征提取使用的模型路径（用于LLM兜底判断）
+# 如果为 None，则使用 MODEL_PATHS 中的模型
+# 如果指定了路径，则特征提取会使用该模型，而不是 MODEL_PATHS 中的模型
+FEATURE_EXTRACTION_MODEL_PATH = None
+# 示例：使用不同的模型进行特征提取
+# FEATURE_EXTRACTION_MODEL_PATH = str(_ROOT / "models" / "qwen2.5-3b-instruct-q4_k_m.gguf")
+
+# 是否在结果中保存目标句子（用于调试）
+SAVE_TARGET_SENTENCE = False
+
+# ===== 特征提取 Prompt 模板 =====
+
+# 位置判断 Prompt
+PROMPT_UPPER_LOBE = """<|im_start|>system
+你是医疗信息提取助手。请判断以下描述中的病灶是否位于肺上叶（左上叶或右上叶）。
+如果是上叶，输出"是"；如果是中叶或下叶，输出"否"；如果无法判断，输出"未知"。<|im_end|>
+<|im_start|>user
+{processed_input}<|im_end|>
+<|im_start|>assistant
+"""
+
+# 毛刺征 Prompt
+PROMPT_SPICULATION = """<|im_start|>system
+你是医疗信息提取助手。请判断以下描述中的病灶是否有毛刺征。
+如果有毛刺，输出"有"；如果没有或边缘光滑，输出"无"；如果无法判断，输出"未知"。<|im_end|>
+<|im_start|>user
+{processed_input}<|im_end|>
+<|im_start|>assistant
+"""
+
+# 钙化 Prompt
+PROMPT_CALCIFICATION = """<|im_start|>system
+你是医疗信息提取助手。请判断以下描述中的病灶是否有钙化。
+如果有钙化，输出"有"；如果没有钙化，输出"无"；如果无法判断，输出"未知"。<|im_end|>
+<|im_start|>user
+{processed_input}<|im_end|>
+<|im_start|>assistant
+"""
+
+# 边界 Prompt
+PROMPT_BOUNDARY = """<|im_start|>system
+你是医疗信息提取助手。请判断以下描述中的病灶边界是否清晰。
+如果边界清晰，输出"清晰"；如果边界不清或模糊，输出"不清晰"；如果无法判断，输出"未知"。<|im_end|>
+<|im_start|>user
+{processed_input}<|im_end|>
+<|im_start|>assistant
+"""
+
+# 分叶征 Prompt
+PROMPT_LOBULATION = """<|im_start|>system
+你是医疗信息提取助手。请判断以下描述中的病灶是否有分叶征。
+如果有分叶，输出"有"；如果没有分叶，输出"无"；如果无法判断，输出"未知"。<|im_end|>
+<|im_start|>user
+{processed_input}<|im_end|>
 <|im_start|>assistant
 """

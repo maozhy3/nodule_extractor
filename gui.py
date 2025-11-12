@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
 """
 GUI界面 - 医疗影像报告批量预测工具
+Version: 1.2.0
 """
+
+__version__ = "1.2.0"
 # 标准库
 import os
 import re
@@ -32,7 +35,7 @@ import pandas as pd
 # 本地模块
 sys.path.insert(0, str(Path(__file__).parent))
 from config_loader import load_config
-from core import batch_predict
+from core import batch_predict, batch_predict_with_features, set_stop_flag
 
 # 加载配置
 config = load_config()
@@ -98,13 +101,13 @@ class RedirectText:
 class MedicalPredictorGUI:
     def __init__(self, root):
         self.root = root
-        self.root.title("医疗影像报告批量预测工具")
-        self.root.geometry("950x750")
+        self.root.title(f"医疗影像报告批量预测工具 v{__version__}")
+        self.root.geometry("900x700")
         
         # 变量
         self.excel_path = tk.StringVar(value=str(config.EXCEL_PATH))
         self.output_path = tk.StringVar(value=str(config.OUTPUT_PATH))
-        self.model_paths = config.MODEL_PATHS.copy()
+        self.model_path = tk.StringVar(value=str(config.MODEL_PATHS[0]) if config.MODEL_PATHS else "")
         self.is_running = False
         
         # 配置参数变量
@@ -112,6 +115,11 @@ class MedicalPredictorGUI:
         self.n_gpu_layers = tk.IntVar(value=config.LLAMA_N_GPU_LAYERS)
         self.max_workers = tk.IntVar(value=config.PROCESS_POOL_MAX_WORKERS)
         self.checkpoint_interval = tk.IntVar(value=config.CHECKPOINT_SAVE_INTERVAL)
+        
+        # 特征提取相关变量
+        self.enable_features = tk.BooleanVar(value=getattr(config, 'ENABLE_FEATURE_EXTRACTION', False))
+        self.save_target_sentence = tk.BooleanVar(value=getattr(config, 'SAVE_TARGET_SENTENCE', False))
+        self.feature_model_path = tk.StringVar(value=str(getattr(config, 'FEATURE_EXTRACTION_MODEL_PATH', '') or ''))
         
         self.create_widgets()
         
@@ -121,72 +129,44 @@ class MedicalPredictorGUI:
         main_frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
         self.root.columnconfigure(0, weight=1)
         self.root.rowconfigure(0, weight=1)
-        main_frame.columnconfigure(1, weight=1)
+        main_frame.columnconfigure(0, weight=1)
         
         # 标题
         title_label = ttk.Label(main_frame, text="医疗影像报告批量预测工具", 
                                font=("Arial", 16, "bold"))
-        title_label.grid(row=0, column=0, columnspan=3, pady=(0, 20))
+        title_label.grid(row=0, column=0, pady=(0, 15))
         
-        # 输入文件选择
+        # ===== 文件和模型配置区域 =====
         row = 1
-        ttk.Label(main_frame, text="输入文件:").grid(row=row, column=0, sticky=tk.W, pady=5)
-        ttk.Entry(main_frame, textvariable=self.excel_path, width=50).grid(
-            row=row, column=1, sticky=(tk.W, tk.E), padx=5)
-        ttk.Button(main_frame, text="浏览...", command=self.browse_input).grid(
-            row=row, column=2, padx=5)
+        io_frame = ttk.LabelFrame(main_frame, text="文件和模型配置", padding="10")
+        io_frame.grid(row=row, column=0, sticky=(tk.W, tk.E), pady=5)
+        io_frame.columnconfigure(1, weight=1)
         
-        # 输出文件选择
-        row += 1
-        ttk.Label(main_frame, text="输出文件:").grid(row=row, column=0, sticky=tk.W, pady=5)
-        ttk.Entry(main_frame, textvariable=self.output_path, width=50).grid(
-            row=row, column=1, sticky=(tk.W, tk.E), padx=5)
-        ttk.Button(main_frame, text="浏览...", command=self.browse_output).grid(
-            row=row, column=2, padx=5)
+        # 输入文件
+        ttk.Label(io_frame, text="输入文件:").grid(row=0, column=0, sticky=tk.W, pady=5)
+        ttk.Entry(io_frame, textvariable=self.excel_path, width=50).grid(
+            row=0, column=1, sticky=(tk.W, tk.E), padx=5)
+        ttk.Button(io_frame, text="浏览...", command=self.browse_input).grid(
+            row=0, column=2, padx=5)
         
-        # 模型列表
-        row += 1
-        ttk.Label(main_frame, text="模型列表:").grid(row=row, column=0, sticky=tk.W, pady=5)
+        # 输出文件
+        ttk.Label(io_frame, text="输出文件:").grid(row=1, column=0, sticky=tk.W, pady=5)
+        ttk.Entry(io_frame, textvariable=self.output_path, width=50).grid(
+            row=1, column=1, sticky=(tk.W, tk.E), padx=5)
+        ttk.Button(io_frame, text="浏览...", command=self.browse_output).grid(
+            row=1, column=2, padx=5)
         
-        # 模型列表框架
-        model_frame = ttk.Frame(main_frame)
-        model_frame.grid(row=row, column=1, columnspan=2, sticky=(tk.W, tk.E), pady=5)
-        model_frame.columnconfigure(0, weight=1)
+        # 模型文件
+        ttk.Label(io_frame, text="模型文件:").grid(row=2, column=0, sticky=tk.W, pady=5)
+        ttk.Entry(io_frame, textvariable=self.model_path, width=50).grid(
+            row=2, column=1, sticky=(tk.W, tk.E), padx=5)
+        ttk.Button(io_frame, text="浏览...", command=self.browse_model).grid(
+            row=2, column=2, padx=5)
         
-        # 模型列表显示
-        self.model_listbox = tk.Listbox(model_frame, height=4)
-        self.model_listbox.grid(row=0, column=0, sticky=(tk.W, tk.E))
-        
-        scrollbar = ttk.Scrollbar(model_frame, orient=tk.VERTICAL, 
-                                 command=self.model_listbox.yview)
-        scrollbar.grid(row=0, column=1, sticky=(tk.N, tk.S))
-        self.model_listbox.config(yscrollcommand=scrollbar.set)
-        
-        # 模型按钮
-        model_btn_frame = ttk.Frame(model_frame)
-        model_btn_frame.grid(row=1, column=0, columnspan=2, pady=5)
-        ttk.Button(model_btn_frame, text="添加模型", 
-                  command=self.add_model).pack(side=tk.LEFT, padx=2)
-        ttk.Button(model_btn_frame, text="删除选中", 
-                  command=self.remove_model).pack(side=tk.LEFT, padx=2)
-        
-        self.update_model_list()
-        
-        # 分隔线
-        row += 1
-        ttk.Separator(main_frame, orient=tk.HORIZONTAL).grid(
-            row=row, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=15)
-        
-        # 配置参数区域
-        row += 1
-        config_label = ttk.Label(main_frame, text="运行参数配置:", 
-                                font=("Arial", 10, "bold"))
-        config_label.grid(row=row, column=0, columnspan=3, sticky=tk.W, pady=(5, 10))
-        
-        # 配置参数框架
+        # ===== 性能参数配置区域 =====
         row += 1
         config_frame = ttk.LabelFrame(main_frame, text="性能参数", padding="10")
-        config_frame.grid(row=row, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=5)
+        config_frame.grid(row=row, column=0, sticky=(tk.W, tk.E), pady=5)
         config_frame.columnconfigure(1, weight=1)
         config_frame.columnconfigure(3, weight=1)
         
@@ -213,20 +193,38 @@ class MedicalPredictorGUI:
         ttk.Label(config_frame, text="(条/次)").grid(row=1, column=4, sticky=tk.W, padx=5, pady=(10, 0))
         
         # 说明文字
-        row += 1
         help_text = "提示：进程数×线程数 ≈ CPU核心数；多进程会增加内存占用"
-        ttk.Label(main_frame, text=help_text, foreground="gray", 
-                 font=("Arial", 8)).grid(row=row, column=0, columnspan=3, sticky=tk.W, pady=(0, 10))
+        ttk.Label(config_frame, text=help_text, foreground="gray", 
+                 font=("Arial", 8)).grid(row=2, column=0, columnspan=5, sticky=tk.W, pady=(5, 0))
         
-        # 分隔线
+        # ===== 特征提取配置区域 =====
         row += 1
-        ttk.Separator(main_frame, orient=tk.HORIZONTAL).grid(
-            row=row, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=10)
+        feature_frame = ttk.LabelFrame(main_frame, text="特征提取配置", padding="10")
+        feature_frame.grid(row=row, column=0, sticky=(tk.W, tk.E), pady=5)
+        feature_frame.columnconfigure(1, weight=1)
         
-        # 控制按钮
+        # 启用特征提取
+        ttk.Checkbutton(feature_frame, text="启用特征提取（提取位置、毛刺征、钙化、边界、分叶征、胸膜凹陷征）", 
+                       variable=self.enable_features).grid(row=0, column=0, columnspan=3, sticky=tk.W, pady=5)
+        
+        # 特征提取模型路径
+        ttk.Label(feature_frame, text="特征提取模型:").grid(row=1, column=0, sticky=tk.W, pady=5)
+        ttk.Entry(feature_frame, textvariable=self.feature_model_path, width=40).grid(
+            row=1, column=1, sticky=(tk.W, tk.E), padx=5)
+        ttk.Button(feature_frame, text="浏览...", command=self.browse_feature_model).grid(
+            row=1, column=2, padx=5)
+        
+        ttk.Label(feature_frame, text="(留空则使用主模型)", foreground="gray", 
+                 font=("Arial", 8)).grid(row=2, column=1, sticky=tk.W, pady=(0, 5))
+        
+        # 保存目标句子选项
+        ttk.Checkbutton(feature_frame, text="保存目标句子（用于调试）", 
+                       variable=self.save_target_sentence).grid(row=3, column=0, columnspan=3, sticky=tk.W, pady=5)
+        
+        # ===== 控制按钮 =====
         row += 1
         btn_frame = ttk.Frame(main_frame)
-        btn_frame.grid(row=row, column=0, columnspan=3, pady=10)
+        btn_frame.grid(row=row, column=0, pady=15)
         
         self.start_btn = ttk.Button(btn_frame, text="开始预测", 
                                     command=self.start_prediction, width=15)
@@ -237,32 +235,24 @@ class MedicalPredictorGUI:
                                    state=tk.DISABLED, width=15)
         self.stop_btn.pack(side=tk.LEFT, padx=5)
         
-        # 日志输出
+        # ===== 日志输出 =====
         row += 1
-        ttk.Label(main_frame, text="运行日志:").grid(
-            row=row, column=0, sticky=tk.W, pady=(10, 5))
-        
-        row += 1
-        self.log_text = scrolledtext.ScrolledText(main_frame, height=15, 
-                                                  wrap=tk.WORD, state=tk.NORMAL)
-        self.log_text.grid(row=row, column=0, columnspan=3, 
-                          sticky=(tk.W, tk.E, tk.N, tk.S), pady=5)
+        log_frame = ttk.LabelFrame(main_frame, text="运行日志", padding="5")
+        log_frame.grid(row=row, column=0, sticky=(tk.W, tk.E, tk.N, tk.S), pady=5)
+        log_frame.columnconfigure(0, weight=1)
+        log_frame.rowconfigure(0, weight=1)
         main_frame.rowconfigure(row, weight=1)
         
-        # 状态栏
+        self.log_text = scrolledtext.ScrolledText(log_frame, height=12, 
+                                                  wrap=tk.WORD, state=tk.NORMAL)
+        self.log_text.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+        
+        # ===== 状态栏 =====
         row += 1
         self.status_label = ttk.Label(main_frame, text="就绪", 
                                      relief=tk.SUNKEN, anchor=tk.W)
-        self.status_label.grid(row=row, column=0, columnspan=3, 
-                              sticky=(tk.W, tk.E), pady=(10, 0))
+        self.status_label.grid(row=row, column=0, sticky=(tk.W, tk.E), pady=(5, 0))
         
-    def update_model_list(self):
-        """更新模型列表显示"""
-        self.model_listbox.delete(0, tk.END)
-        for model_path in self.model_paths:
-            model_name = Path(model_path).name
-            self.model_listbox.insert(tk.END, model_name)
-    
     def browse_input(self):
         """浏览输入文件"""
         filename = filedialog.askopenfilename(
@@ -282,23 +272,23 @@ class MedicalPredictorGUI:
         if filename:
             self.output_path.set(filename)
     
-    def add_model(self):
-        """添加模型"""
+    def browse_model(self):
+        """浏览模型文件"""
         filename = filedialog.askopenfilename(
             title="选择模型文件",
             filetypes=[("GGUF模型", "*.gguf"), ("所有文件", "*.*")]
         )
         if filename:
-            self.model_paths.append(filename)
-            self.update_model_list()
+            self.model_path.set(filename)
     
-    def remove_model(self):
-        """删除选中的模型"""
-        selection = self.model_listbox.curselection()
-        if selection:
-            idx = selection[0]
-            del self.model_paths[idx]
-            self.update_model_list()
+    def browse_feature_model(self):
+        """浏览特征提取模型文件"""
+        filename = filedialog.askopenfilename(
+            title="选择特征提取模型文件",
+            filetypes=[("GGUF模型", "*.gguf"), ("所有文件", "*.*")]
+        )
+        if filename:
+            self.feature_model_path.set(filename)
     
     def start_prediction(self):
         """开始预测"""
@@ -307,8 +297,8 @@ class MedicalPredictorGUI:
             messagebox.showerror("错误", "输入文件不存在！")
             return
         
-        if not self.model_paths:
-            messagebox.showerror("错误", "请至少添加一个模型！")
+        if not self.model_path.get() or not Path(self.model_path.get()).exists():
+            messagebox.showerror("错误", "请选择有效的模型文件！")
             return
         
         # 更新配置参数
@@ -316,6 +306,15 @@ class MedicalPredictorGUI:
         config.LLAMA_N_GPU_LAYERS = self.n_gpu_layers.get()
         config.PROCESS_POOL_MAX_WORKERS = self.max_workers.get()
         config.CHECKPOINT_SAVE_INTERVAL = self.checkpoint_interval.get()
+        
+        # 更新特征提取配置
+        config.ENABLE_FEATURE_EXTRACTION = self.enable_features.get()
+        config.SAVE_TARGET_SENTENCE = self.save_target_sentence.get()
+        feature_model = self.feature_model_path.get().strip()
+        config.FEATURE_EXTRACTION_MODEL_PATH = feature_model if feature_model else None
+        
+        # 重置停止标志
+        set_stop_flag(False)
         
         # 更新UI状态
         self.is_running = True
@@ -337,15 +336,55 @@ class MedicalPredictorGUI:
         try:
             # 读取数据
             df = pd.read_excel(self.excel_path.get())
-            print(f"成功读取输入文件: {self.excel_path.get()}")
+            print(f"✓ 成功读取输入文件: {self.excel_path.get()}")
             print(f"共 {len(df)} 条数据\n")
             
-            # 对每个模型进行预测
-            for model_path in self.model_paths:
-                if not self.is_running:
-                    print("\n预测已停止")
-                    break
+            # 检查是否启用特征提取功能
+            enable_features = getattr(config, 'ENABLE_FEATURE_EXTRACTION', False)
+            
+            if enable_features:
+                print("📋 特征提取模式已启用")
+                print("   将提取：最大尺寸、位置、毛刺征、钙化、边界清晰度、分叶征、胸膜凹陷征\n")
+            else:
+                print("📏 仅提取最大尺寸模式\n")
+            
+            # 获取模型路径
+            model_path = self.model_path.get()
+            
+            if not self.is_running:
+                print("\n⚠ 预测已停止")
+                return
+            
+            if enable_features:
+                # 使用特征提取模式
+                model_name = Path(model_path).stem
+                existing_size_col = None
                 
+                # 检查已知的模型列名
+                known_models = [
+                    "qwen-medical-lora-251106-f16",
+                    "qwen-medical-lora-251106-q4_k_m",
+                    "qwen2.5-3b-instruct-q4_k_m"
+                ]
+                
+                for known_model in known_models:
+                    pred_col = f"pred_{known_model}"
+                    if pred_col in df.columns:
+                        existing_size_col = pred_col
+                        print(f"✓ 检测到已有尺寸结果列: {pred_col}")
+                        print(f"  将跳过尺寸提取，直接使用已有结果进行特征提取\n")
+                        break
+                
+                results_df, total_time, model_name = batch_predict_with_features(
+                    df, model_path, config, existing_size_col
+                )
+                
+                # 将结果列合并到原始df
+                for col in results_df.columns:
+                    col_name = f"{col}_{model_name}" if col != 'max_size' else f"pred_{model_name}"
+                    df[col_name] = results_df[col]
+            else:
+                # 使用原有的仅提取尺寸模式
                 preds, total_time, model_name = batch_predict(df, model_path, config)
                 col_name = f"pred_{model_name}"
                 df[col_name] = preds
@@ -356,6 +395,13 @@ class MedicalPredictorGUI:
                 print(f"\n✓ 结果已保存至：{self.output_path.get()}")
                 self.root.after(0, lambda: messagebox.showinfo(
                     "完成", f"预测完成！\n结果已保存至：{self.output_path.get()}"))
+            else:
+                # 用户停止了预测，保存部分结果
+                df.to_excel(self.output_path.get(), index=False)
+                print(f"\n✓ 部分结果已保存至：{self.output_path.get()}")
+                print("✓ 检查点已保存，下次运行将从断点继续")
+                self.root.after(0, lambda: messagebox.showinfo(
+                    "已停止", f"预测已停止！\n部分结果已保存至：{self.output_path.get()}\n下次运行将从断点继续"))
             
         except Exception as e:
             print(f"\n❌ 错误: {e}")
@@ -370,8 +416,9 @@ class MedicalPredictorGUI:
     def stop_prediction(self):
         """停止预测"""
         self.is_running = False
+        set_stop_flag(True)
         self.status_label.config(text="正在停止...")
-        print("\n⚠ 用户请求停止...")
+        print("\n⚠ 用户请求停止，正在保存检查点...")
     
     def reset_ui(self):
         """重置UI状态"""

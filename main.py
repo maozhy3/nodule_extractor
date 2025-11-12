@@ -40,10 +40,52 @@ def main() -> None:
         print(f"✓ 成功读取输入文件: {config.EXCEL_PATH}")
         print(f"共 {len(df)} 条数据\n")
 
+        # 检查是否启用特征提取功能
+        enable_features = getattr(config, 'ENABLE_FEATURE_EXTRACTION', False)
+        
+        if enable_features:
+            print("📋 特征提取模式已启用")
+            print("   将提取：最大尺寸、位置、毛刺征、钙化、边界清晰度、分叶征、胸膜凹陷征\n")
+        else:
+            print("📏 仅提取最大尺寸模式\n")
+
         for model_path in config.MODEL_PATHS:
-            preds, total_time, model_name = batch_predict(df, model_path, config)
-            col_name = f"pred_{model_name}"
-            df[col_name] = preds
+            if enable_features:
+                # 使用特征提取模式
+                from core import batch_predict_with_features
+                
+                # 检查是否已有该模型的尺寸结果
+                model_name = Path(model_path).stem
+                existing_size_col = None
+                
+                # 检查已知的模型列名
+                known_models = [
+                    "qwen-medical-lora-251106-f16",
+                    "qwen-medical-lora-251106-q4_k_m",
+                    "qwen2.5-3b-instruct-q4_k_m"
+                ]
+                
+                for known_model in known_models:
+                    pred_col = f"pred_{known_model}"
+                    if pred_col in df.columns:
+                        existing_size_col = pred_col
+                        print(f"✓ 检测到已有尺寸结果列: {pred_col}")
+                        print(f"  将跳过尺寸提取，直接使用已有结果进行特征提取\n")
+                        break
+                
+                results_df, total_time, model_name = batch_predict_with_features(
+                    df, model_path, config, existing_size_col
+                )
+                
+                # 将结果列合并到原始df
+                for col in results_df.columns:
+                    col_name = f"{col}_{model_name}" if col != 'max_size' else f"pred_{model_name}"
+                    df[col_name] = results_df[col]
+            else:
+                # 使用原有的仅提取尺寸模式
+                preds, total_time, model_name = batch_predict(df, model_path, config)
+                col_name = f"pred_{model_name}"
+                df[col_name] = preds
 
         df.to_excel(config.OUTPUT_PATH, index=False)
         print(f"\n✓ 结果已保存至：{config.OUTPUT_PATH}")

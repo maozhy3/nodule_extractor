@@ -26,11 +26,12 @@ def get_base_path() -> Path:
 
 def load_config() -> Any:
     """
-    加载配置，支持外部配置覆盖
+    加载配置，支持多层配置覆盖
     
-    优先级：
-    1. 外部配置文件（exe同级目录的config.py）
-    2. 默认配置文件（内置的config.py）
+    优先级（从低到高）：
+    1. 默认配置文件（内置的 config.py）
+    2. 私有配置文件（config_private.py）- 用户个人配置，不提交到 git
+    3. 外部配置文件（exe同级目录的 config.py）- 打包后的外部配置
     
     Returns:
         配置模块对象
@@ -38,8 +39,29 @@ def load_config() -> Any:
     # 导入默认配置
     import config as default_config
     
-    # 尝试加载外部配置
     base_path = get_base_path()
+    
+    # 尝试加载私有配置（config_private.py）
+    private_config_path = base_path / 'config_private.py'
+    if private_config_path.exists():
+        try:
+            spec = importlib.util.spec_from_file_location(
+                "config_private", 
+                private_config_path
+            )
+            private_config = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(private_config)
+            
+            # 用私有配置覆盖默认配置
+            for key in dir(private_config):
+                if not key.startswith('_'):
+                    setattr(default_config, key, getattr(private_config, key))
+            
+            print(f"✓ 已加载私有配置: {private_config_path}")
+        except Exception as e:
+            print(f"⚠ 加载私有配置失败: {e}")
+    
+    # 尝试加载外部配置（打包后的场景）
     external_config_path = base_path / 'config.py'
     
     # 如果外部配置存在且不是默认配置本身
@@ -52,7 +74,7 @@ def load_config() -> Any:
             external_config = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(external_config)
             
-            # 用外部配置覆盖默认配置
+            # 用外部配置覆盖默认配置和私有配置
             for key in dir(external_config):
                 if not key.startswith('_'):
                     setattr(default_config, key, getattr(external_config, key))
@@ -60,7 +82,6 @@ def load_config() -> Any:
             print(f"✓ 已加载外部配置: {external_config_path}")
         except Exception as e:
             print(f"⚠ 加载外部配置失败: {e}")
-            print("使用默认配置")
     
     return default_config
 
