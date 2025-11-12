@@ -1,6 +1,6 @@
 # Lung Nodule Size Extraction Tool
 
-[中文](README.md) | English
+[中文](../README.md) | English
 
 An automated lung nodule size extraction tool based on llama.cpp and Qwen medical model, supporting intelligent extraction of maximum lesion diameter from imaging reports.
 
@@ -15,6 +15,10 @@ An automated lung nodule size extraction tool based on llama.cpp and Qwen medica
 - 📊 Batch processing of Excel data
 - ⚙️ Flexible configuration management
 - 📦 Package as standalone exe
+
+## Interface Preview
+
+![GUI Interface](images/gui-screenshot.png)
 
 ---
 

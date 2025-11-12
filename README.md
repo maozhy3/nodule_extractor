@@ -1,6 +1,6 @@
 # 肺结节尺寸提取工具
 
-中文 | [English](README_EN.md)
+中文 | [English](docs/README_EN.md)
 
 基于 llama.cpp 和 Qwen 医疗模型的肺结节尺寸自动提取工具，支持从影像报告中智能提取病灶最大直径。
 
@@ -15,6 +15,10 @@
 - 📊 批量处理 Excel 数据
 - ⚙️ 灵活的配置管理
 - 📦 支持打包成独立 exe
+
+## 界面预览
+
+![GUI界面](docs/images/gui-screenshot.png)
 
 ---
 
